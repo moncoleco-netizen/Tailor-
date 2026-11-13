@@ -33,6 +33,14 @@ th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left}
 th{color:var(--mute);font-size:12px;text-transform:uppercase}
 td.r,th.r{text-align:right}
 tr.d{cursor:pointer}
+/* Very light pastel category coding */
+.cat-tag{display:inline-block;padding:2px 7px;border-radius:7px;font-size:12px;font-weight:600;color:var(--cat-ink,#665d57);background:var(--cat-bg,#f2f0ed)}
+.chip[data-c]{background:var(--cat-bg,var(--card));border-color:var(--cat-border,var(--line));color:var(--ink)}
+.chip.on{background:var(--accent);color:var(--on);border-color:var(--accent)}
+#sheetView tr.d td{background:var(--cat-bg,#fff)}
+#sheetView tr.d select[data-f=category]{background:var(--cat-bg,#fff);border-color:var(--cat-border,var(--line));font-weight:600}
+#sheetView tr.gr td{background:var(--cat-bg,#f5f1eb)}
+.row{border-left:4px solid var(--cat-border,var(--line));background:var(--cat-bg,var(--card))}
 tfoot td{font-weight:700;border-bottom:0}
 th{padding:9px 15px}
 td{padding:5px 6px}
@@ -270,6 +278,20 @@ textarea.dd{margin-top:8px}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const CATS=["Fabric","Beads","Lace & Trims","Thread","Buttons","Zips","Lining & Interfacing","Elastic","Tools & Needles","Packaging","Other"];
+const CAT_PALETTE={
+  "Fabric":["#FFF0ED","#B96D60","#F2C8C1"],
+  "Beads":["#EEF4E9","#71856A","#D4E2CC"],
+  "Lace & Trims":["#FFF8DF","#9A8747","#F0E5B8"],
+  "Thread":["#EEF6FF","#6483A5","#D2E3F4"],
+  "Buttons":["#EAF7F3","#4E8A78","#C8E7DC"],
+  "Zips":["#FFF1E8","#A87956","#F1D5C2"],
+  "Lining & Interfacing":["#F2EDFA","#806C9F","#DCCFF0"],
+  "Elastic":["#FCEEF3","#A85F7B","#F0CAD9"],
+  "Tools & Needles":["#F0F2F4","#687783","#D7DDE2"],
+  "Packaging":["#EAF5FF","#6483A5","#CFE4F7"],
+  "Other":["#F3F0EC","#7C7167","#DED7CE"]
+};
+const catVars=c=>{const [bg,ink,border]=CAT_PALETTE[c]||CAT_PALETTE.Other;return `--cat-bg:${bg};--cat-ink:${ink};--cat-border:${border}`};
 const UNITS=["metres","yards","pieces","spools","packs","grams"];
 const fmt=new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
 const $=s=>document.querySelector(s);
@@ -401,14 +423,14 @@ function render(){
   const m=items.filter(e=>{const d=new Date(e.date+"T00:00");return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();})
     .reduce((s,e)=>s+e.amount,0);
   const cs=$("#chips").scrollLeft;
-  $("#chips").innerHTML=["All",...CATS].map(c=>`<button class="chip${c===fc?" on":""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  $("#chips").innerHTML=["All",...CATS].map(c=>`<button class="chip${c===fc?" on":""}" data-c="${esc(c)}" style="${c==="All"?"":catVars(c)}">${esc(c)}</button>`).join("");
   $("#chips").scrollLeft=cs;
   $("#month").textContent=fmt.format(m);
   $("#all").textContent=items.length?`All time: ${fmt.format(items.reduce((s,e)=>s+e.amount,0))} · ${items.length} purchases`:"";
-  $("#list").innerHTML=list.length?groupize(list).map(G=>gHead(G)+G.items.map(e=>`<div class="row" data-id="${e.id}">
+  $("#list").innerHTML=list.length?groupize(list).map(G=>gHead(G)+G.items.map(e=>`<div class="row" data-id="${e.id}" style="${catVars(e.category)}">
     ${e.photo?`<img class="th" src="${e.photo}" alt="">`:`<div class="th">🧵</div>`}
     <div class="m"><div class="n">${esc(e.name)}</div>
-    <div class="s">${esc(e.category)}${e.color?" ("+esc(e.color)+")":""} · ${new Date(e.date+"T00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}${e.supplier?" · "+esc(e.supplier):""}</div>${e.use?`<div class="s">Use: ${esc(e.use)}</div>`:""}</div>
+    <div class="s"><span class="cat-tag" style="${catVars(e.category)}">${esc(e.category)}</span>${e.color?" ("+esc(e.color)+")":""} · ${new Date(e.date+"T00:00").toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}${e.supplier?" · "+esc(e.supplier):""}</div>${e.use?`<div class="s">Use: ${esc(e.use)}</div>`:""}</div>
     <div class="p">${fmt.format(e.amount)}</div></div>`).join("")).join("")
     :`<div class="empty">${items.length?"No matches.":"No purchases yet. Tap + to add your first material."}</div>`;
   $("#cnt").textContent=items.length?`Showing ${list.length} of ${items.length} · ${fmt.format(list.reduce((s,e)=>s+e.amount,0))}`:"";
@@ -423,7 +445,7 @@ function renderSheet(list){
   const inp=(f,t,v,x="")=>`<td><input data-f="${f}" type="${t}" value="${esc(v)}" ${x}></td>`;
   const sel=(f,opts,v)=>`<td><select data-f="${f}">${opts.map(o=>`<option${o===v?" selected":""}>${esc(o)}</option>`).join("")}</select></td>`;
   const head=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 8px"><b>Purchase spreadsheet</b><button class="mini" data-a="new">+ Add purchase row</button></div>`;
-  const table=list.length?`<table><thead><tr><th>Material</th><th>Category</th><th class="r">Qty</th><th>Unit</th><th class="r">Per unit</th><th class="r">Amount</th><th>Colour</th><th>Supplier</th><th>Date</th><th>Use</th><th>Project</th><th>Notes</th><th></th></tr></thead><tbody>${groupize(list).map(G=>gRow(G)+G.items.map(e=>`<tr class="d" data-id="${e.id}">${inp("name","text",e.name)}${sel("category",CATS,e.category)}${inp("quantity","number",e.quantity,num)}${sel("unit",UNITS,e.unit)}${inp("ppu","number",e.quantity>0?+(e.amount/e.quantity).toFixed(4):0,num)}${inp("amount","number",e.amount,num)}${inp("color","text",e.color||"")}${inp("supplier","text",e.supplier||"")}${inp("date","date",e.date)}${inp("use","text",e.use||"")}${inp("project","text",e.project||"",'list="projlist"')}${inp("notes","text",e.notes||"")}<td><button class="mini" data-a="del">✕</button></td></tr>`).join("")).join("")}</tbody><tfoot><tr><td colspan="5">Total (${list.length})</td><td class="r tt">${fmt.format(tot)}</td><td colspan="7"></td></tr></tfoot></table>`:`<div class="empty">No purchases yet. Use “Add purchase row” to enter your first purchase.</div>`;
+  const table=list.length?`<table><thead><tr><th>Material</th><th>Category</th><th class="r">Qty</th><th>Unit</th><th class="r">Per unit</th><th class="r">Amount</th><th>Colour</th><th>Supplier</th><th>Date</th><th>Use</th><th>Project</th><th>Notes</th><th></th></tr></thead><tbody>${groupize(list).map(G=>gRow(G)+G.items.map(e=>`<tr class="d" data-id="${e.id}" data-cat="${esc(e.category)}" style="${catVars(e.category)}">${inp("name","text",e.name)}${sel("category",CATS,e.category)}${inp("quantity","number",e.quantity,num)}${sel("unit",UNITS,e.unit)}${inp("ppu","number",e.quantity>0?+(e.amount/e.quantity).toFixed(4):0,num)}${inp("amount","number",e.amount,num)}${inp("color","text",e.color||"")}${inp("supplier","text",e.supplier||"")}${inp("date","date",e.date)}${inp("use","text",e.use||"")}${inp("project","text",e.project||"",'list="projlist"')}${inp("notes","text",e.notes||"")}<td><button class="mini" data-a="dup" title="Duplicate row" aria-label="Duplicate row">⧉</button><button class="mini" data-a="del" title="Delete row" aria-label="Delete row">✕</button></td></tr>`).join("")).join("")}</tbody><tfoot><tr><td colspan="5">Total (${list.length})</td><td class="r tt">${fmt.format(tot)}</td><td colspan="7"></td></tr></tfoot></table>`:`<div class="empty">No purchases yet. Use “Add purchase row” to enter your first purchase.</div>`;
   $("#sheetView").innerHTML=head+table;
   $("#sheetView").scrollLeft=sl;
 }
@@ -583,8 +605,8 @@ function groupize(list){
   return ks.map(k=>({k:k||"No project",items:m.get(k)}));
 }
 const gSum=G=>G.items.reduce((s,e)=>s+e.amount,0);
-const gHead=G=>G.k===null?"":`<div class="gh"><span>${esc(G.k)}</span><span>${fmt.format(gSum(G))} · ${G.items.length}</span></div>`;
-const gRow=G=>G.k===null?"":`<tr class="gr" data-k="${esc(G.k)}" data-ids="${G.items.map(e=>e.id).join(",")}"><td colspan="13">${esc(G.k)} — ${fmt.format(gSum(G))} · ${G.items.length}</td></tr>`;
+const gHead=G=>G.k===null?"":`<div class="gh" style="${catVars(G.items[0]?.category||G.k)}"><span>${esc(G.k)}</span><span>${fmt.format(gSum(G))} · ${G.items.length}</span></div>`;
+const gRow=G=>G.k===null?"":`<tr class="gr" style="${catVars(G.items[0]?.category||G.k)}" data-k="${esc(G.k)}" data-ids="${G.items.map(e=>e.id).join(",")}"><td colspan="13">${esc(G.k)} — ${fmt.format(gSum(G))} · ${G.items.length}</td></tr>`;
 function updTotals(){
   const now=new Date(),m=items.filter(e=>{const d=new Date(e.date+"T00:00");return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).reduce((s,e)=>s+e.amount,0);
   $("#month").textContent=fmt.format(m);
@@ -756,6 +778,12 @@ $("#sheetView").onclick=async e=>{
   }
   const x=items.find(i=>i.id===+tr?.dataset.id);if(!x)return;
   if(b.dataset.a==="edit")openForm(x);
+  else if(b.dataset.a==="dup"){
+    const copy={...x,id:Date.now()};
+    while(items.some(i=>i.id===copy.id))copy.id++;
+    try{await persist(()=>run("readwrite",s=>s.put(copy)));items.push(copy);render();}
+    catch(err){alert("Could not duplicate this row. Your original row is unchanged. Please try again.");}
+  }
   else if(b.dataset.a==="del"&&confirm("Delete this purchase and its photo?")){
     try{await persist(()=>run("readwrite",s=>s.delete(x.id)));items=items.filter(i=>i.id!==x.id);render();}
     catch(err){alert("Could not delete this purchase from this device. It is still in your list. Please try again.");}
