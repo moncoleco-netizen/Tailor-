@@ -154,7 +154,7 @@ textarea.dd{margin-top:8px}
     <label>Password</label><input id="sbPassword" type="password" autocomplete="current-password" placeholder="Your password">
     <div class="btns" style="margin-top:10px"><button id="sbTest">Test connection</button><button id="sbConnect">Sign in</button><button id="sbSignup">Create account</button></div>
     <div class="btns" style="margin-top:8px"><button id="sbSync">Sync now</button><button id="sbLogout">Sign out</button></div>
-    <div class="note" id="sbMsg">Your data stays on this device until you connect. Configure the SQL table and row-level security in Supabase before signing in.</div>
+    <div class="note" id="sbMsg">Sign in once; this device will remember your session and sync automatically. Configure Supabase once before first sign-in.</div>
   </details>
   <input class="search" id="q" type="search" placeholder="Search name, supplier, category">
   <div class="chips" id="chips"></div>
@@ -280,10 +280,23 @@ let db=null,items=[],cur=null,photo=null,last="ppg",fc="All",view="list",project
 function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open("tailorspend",3);
   r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains("expenses"))d.createObjectStore("expenses",{keyPath:"id"});if(!d.objectStoreNames.contains("projects"))d.createObjectStore("projects",{keyPath:"id"});if(!d.objectStoreNames.contains("designs"))d.createObjectStore("designs",{keyPath:"id"});};
   r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
-function run(mode,fn,st="expenses"){return new Promise((res,rej)=>{const t=db.transaction(st,mode),changes=[];
-  const raw=t.objectStore(st),store=new Proxy(raw,{get(target,prop){if(prop==="put")return (value,...args)=>{changes.push({op:"put",value});return target.put(value,...args);};if(prop==="delete")return (key)=>{changes.push({op:"delete",key});return target.delete(key);};const v=target[prop];return typeof v==="function"?v.bind(target):v;}});
-  const req=fn(store);t.oncomplete=()=>{if(mode==="readwrite"&&changes.length)changes.forEach(c=>cloudMutation(st,c));res(req&&req.result);};t.onerror=()=>rej(t.error);});}
-async function persist(fn){ if(!db) return; try{await fn();}catch(e){alert("Could not save to this browser’s storage.");} }
+function run(mode,fn,st="expenses"){return new Promise((res,rej)=>{
+  if(!db){rej(new Error("Local database is not available."));return;}
+  let t,req;const changes=[];
+  try{
+    t=db.transaction(st,mode);
+    const raw=t.objectStore(st),store=new Proxy(raw,{get(target,prop){
+      if(prop==="put")return (value,...args)=>{changes.push({op:"put",value});return target.put(value,...args);};
+      if(prop==="delete")return (key)=>{changes.push({op:"delete",key});return target.delete(key);};
+      const v=target[prop];return typeof v==="function"?v.bind(target):v;
+    }});
+    req=fn(store);
+  }catch(e){try{t&&t.abort();}catch(_){}rej(e);return;}
+  t.oncomplete=()=>{if(mode==="readwrite"&&changes.length)changes.forEach(c=>cloudMutation(st,c));res(req&&req.result);};
+  t.onerror=()=>rej(t.error||new Error("Storage transaction failed."));
+  t.onabort=()=>rej(t.error||new Error("Storage transaction was cancelled."));
+});}
+async function persist(fn){if(!db)throw new Error("Local database is not available.");return await fn();}
 
 // Supabase cloud sync. Local IndexedDB remains the offline-first cache.
 let sb=null,sbUser=null,cloudBusy=false;
@@ -293,7 +306,7 @@ function cloudState(){ $("#cloudState").textContent=sbUser?"· Signed in as "+sb
 function setupSupabase(){
   const url=$("#sbUrl").value.trim(),key=$("#sbKey").value.trim();
   if(!url||!key||!window.supabase){cloudMsg("Enter your Supabase URL and anon/publishable key. Check your internet connection.");return false;}
-  try{localStorage.setItem("tailorspend_sb_url",url);localStorage.setItem("tailorspend_sb_key",key);sb=window.supabase.createClient(url,key);return true;}
+  try{localStorage.setItem("tailorspend_sb_url",url);localStorage.setItem("tailorspend_sb_key",key);sb=window.supabase.createClient(url,key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});return true;}
   catch(e){cloudMsg("Could not initialise Supabase: "+e.message);return false;}
 }
 async function cloudMutation(store,change){
@@ -351,6 +364,23 @@ async function sbAuth(kind){
     if(!sbUser){cloudMsg("Check your email to confirm your account, then sign in.");return;}
     cloudState();await syncCloud();
   }catch(e){cloudMsg(e instanceof TypeError?"Network request failed before Supabase could respond. Tap Test connection. If that also fails, temporarily disable Safari content blockers/VPN/iCloud Private Relay for this page or try Chrome.":"Authentication failed: "+e.message);}
+}
+
+
+async function restoreCloudSession(){
+  if(!setupSupabase())return;
+  try{
+    const {data,error}=await sb.auth.getSession();
+    if(error)throw error;
+    sbUser=data.session?.user||null;
+    cloudState();
+    if(sbUser){cloudMsg("Welcome back · syncing your data…");await syncCloud();}
+    else cloudMsg("Not signed in. Sign in once and this device will remember you.");
+    sb.auth.onAuthStateChange((_event,session)=>{
+      sbUser=session?.user||null;cloudState();
+      if(sbUser&&!cloudBusy)syncCloud();
+    });
+  }catch(e){cloudMsg("Could not restore sign-in: "+e.message);}
 }
 
 
@@ -460,10 +490,12 @@ async function saveP(){
 async function delP(){
   if(!pcur.name||!confirm("Delete this project? Its purchases stay, but they won’t be linked to a project."))return;
   const n=pcur.name,rec=pcur.rec,ch=items.filter(e=>e.project===n);
-  ch.forEach(e=>e.project="");
-  projects=projects.filter(p=>p.name!==n);
-  await persist(async()=>{if(rec)await run("readwrite",s=>s.delete(rec.id),"projects");for(const e of ch)await run("readwrite",s=>s.put(e));});
-  $("#psheet").classList.remove("on");render();
+  try{
+    await persist(async()=>{if(rec)await run("readwrite",s=>s.delete(rec.id),"projects");for(const e of ch)await run("readwrite",s=>s.put({...e,project:""}));});
+    ch.forEach(e=>e.project="");
+    projects=projects.filter(p=>p.name!==n);
+    $("#psheet").classList.remove("on");render();
+  }catch(err){alert("Could not delete the project. Your data has not been removed from the screen. Please try again.");}
 }
 const GARMENTS={
 skirt:{name:"Skirt",outline:"M105 50 L195 50 L245 290 L55 290 Z",m:[["waist","Waist",[105,50,195,50]],["hip","Hip",[94,105,206,105]],["hipdepth","Waist to hip",[75,50,75,105]],["length","Skirt length",[262,50,262,290]],["hem","Hem sweep",[55,305,245,305]]]},
@@ -535,10 +567,13 @@ async function saveD(){
   $("#dsheet").classList.remove("on");render();
 }
 async function delD(){
-  if(!confirm("Delete this design and all its images?"))return;
-  designs=designs.filter(x=>x.id!==dcur.id);
-  await persist(()=>run("readwrite",s=>s.delete(dcur.id),"designs"));
-  $("#dsheet").classList.remove("on");render();
+  if(!dcur||!confirm("Delete this design and all its images?"))return;
+  const id=dcur.id;
+  try{
+    await persist(()=>run("readwrite",s=>s.delete(id),"designs"));
+    designs=designs.filter(x=>x.id!==id);
+    $("#dsheet").classList.remove("on");render();
+  }catch(err){alert("Could not delete the design. Please try again.");}
 }
 function groupize(list){
   const g=$("#grp").value;if(g==="none")return [{k:null,items:list}];
@@ -614,9 +649,12 @@ async function save(){
 
 async function remove(){
   if(!cur||!confirm("Delete this purchase and its photo?")) return;
-  items=items.filter(x=>x.id!==cur.id);
-  await persist(()=>run("readwrite",s=>s.delete(cur.id)));
-  closeForm();render();
+  const id=cur.id;
+  try{
+    await persist(()=>run("readwrite",s=>s.delete(id)));
+    items=items.filter(x=>x.id!==id);
+    closeForm();render();
+  }catch(err){alert("Could not delete this purchase from this device. It is still in your list. Please try again.");}
 }
 
 $("#cat").innerHTML=CATS.map(c=>`<option>${esc(c)}</option>`).join("");
@@ -718,7 +756,10 @@ $("#sheetView").onclick=async e=>{
   }
   const x=items.find(i=>i.id===+tr?.dataset.id);if(!x)return;
   if(b.dataset.a==="edit")openForm(x);
-  else if(b.dataset.a==="del"&&confirm("Delete this purchase and its photo?")){items=items.filter(i=>i.id!==x.id);await persist(()=>run("readwrite",s=>s.delete(x.id)));render();}
+  else if(b.dataset.a==="del"&&confirm("Delete this purchase and its photo?")){
+    try{await persist(()=>run("readwrite",s=>s.delete(x.id)));items=items.filter(i=>i.id!==x.id);render();}
+    catch(err){alert("Could not delete this purchase from this device. It is still in your list. Please try again.");}
+  }
 };
 $("#sheetView").addEventListener("keydown",e=>{
   if(e.key!=="Enter")return;
@@ -764,6 +805,7 @@ $("#list").onclick=e=>{const r=e.target.closest(".row");if(r)openForm(items.find
     for(const x of items){if(!CATS.includes(x.category)){x.category=x.category==="Laces"?"Lace & Trims":"Other";await run("readwrite",s=>s.put(x));}}}
   catch(e){db=null;alert("Saving isn’t available in this browser, so purchases will be lost when you close the page.");}
   render();
+  await restoreCloudSession();
 })();
 </script>
 </body>
